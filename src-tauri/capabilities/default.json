@@ -1,0 +1,34 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main",
+    "quick-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-size",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-always-on-top",
+    "core:window:allow-create",
+    "core:webview:allow-create-webview-window",
+    "core:webview:allow-set-webview-zoom",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "dialog:allow-message",
+    "process:allow-exit",
+    "process:allow-restart"
+  ]
+}
