@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Lightbox from "yet-another-react-lightbox";
+import Zoom from "yet-another-react-lightbox/plugins/zoom";
+import "yet-another-react-lightbox/styles.css";
 
 interface MarkdownPreviewProps {
   content: string;
@@ -18,6 +21,39 @@ function CopyButton({ text }: { text: string }) {
       className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost bg-paper-deep/40 hover:text-accent hover:bg-accent-mist/60 transition-colors opacity-0 group-hover/code:opacity-100">
       {copied ? "✓" : "复制"}
     </button>
+  );
+}
+
+function ImageWithLightbox({ src, alt }: { src: string; alt?: string }) {
+  const [open, setOpen] = useState(false);
+
+  const handleClose = useCallback(() => setOpen(false), []);
+
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        className="max-w-full rounded cursor-zoom-in"
+        onClick={() => setOpen(true)}
+      />
+      <Lightbox
+        open={open}
+        close={handleClose}
+        slides={[{ src }]}
+        plugins={[Zoom]}
+        zoom={{
+          scrollToZoom: true,
+          maxZoomPixelRatio: 5,
+        }}
+        render={{
+          buttonPrev: () => null,
+          buttonNext: () => null,
+        }}
+        carousel={{ finite: true }}
+        controller={{ closeOnBackdropClick: true }}
+      />
+    </>
   );
 }
 
@@ -40,6 +76,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps) {
                 <pre>{children}</pre>
               </div>
             );
+          },
+          img({ src, alt }) {
+            return <ImageWithLightbox src={src || ""} alt={alt} />;
           },
         }}
       >

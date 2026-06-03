@@ -164,6 +164,40 @@ input, textarea {
   border-radius: 2px;
 }
 
+/* Folder filter */
+.folder-filter {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-paper-deep);
+}
+.folder-filter::-webkit-scrollbar {
+  height: 0;
+}
+.filter-chip {
+  padding: 2px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--color-paper-deep);
+  background: transparent;
+  font-size: 10px;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.filter-chip:hover {
+  color: var(--color-ink-soft);
+  border-color: var(--color-ink-ghost);
+}
+.filter-chip.active {
+  background: var(--color-accent-mist);
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
 /* Note list */
 .note-list {
   flex: 1;
@@ -191,22 +225,17 @@ input, textarea {
 .note-item:hover {
   background: var(--color-paper-warm);
 }
-.note-item-header {
+.note-item-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 4px;
-}
-.note-type {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--color-accent-mist);
-  color: var(--color-accent);
+  gap: 8px;
 }
 .note-time {
   font-size: 10px;
   color: var(--color-ink-ghost);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .note-item-title {
   font-size: 12px;
@@ -214,6 +243,8 @@ input, textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 /* Note view */

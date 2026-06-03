@@ -16,7 +16,14 @@ interface Note {
   updated_at: string;
 }
 
+interface Folder {
+  id: string;
+  name: string;
+  parent_id: string | null;
+}
+
 type Mode = "write" | "browse";
+type FilterType = "all" | "uncategorized" | string;
 
 function QuickNote() {
   const [content, setContent] = useState("");
@@ -24,6 +31,8 @@ function QuickNote() {
   const [pinned, setPinned] = useState(loadQuickPinned);
   const [mode, setMode] = useState<Mode>("write");
   const [notes, setNotes] = useState<Note[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [filter, setFilter] = useState<FilterType>("all");
   const [viewNote, setViewNote] = useState<Note | null>(null);
   const [editContent, setEditContent] = useState("");
   const [isModified, setIsModified] = useState(false);
@@ -86,9 +95,22 @@ function QuickNote() {
     }, 800);
   };
 
-  const loadNotes = async () => {
-    const result = await invoke<Note[]>("get_notes", { noteType: null, search: null });
+  const loadNotes = async (folderFilter?: FilterType) => {
+    const f = folderFilter ?? filter;
+    let result: Note[];
+    if (f === "all") {
+      result = await invoke<Note[]>("get_notes", { search: null, folderId: null });
+    } else if (f === "uncategorized") {
+      result = await invoke<Note[]>("get_notes", { search: null, folderId: "" });
+    } else {
+      result = await invoke<Note[]>("get_notes", { search: null, folderId: f });
+    }
     setNotes(result);
+  };
+
+  const loadFolders = async () => {
+    const result = await invoke<Folder[]>("get_folders");
+    setFolders(result);
   };
 
   const selectNote = (note: Note) => {
@@ -99,7 +121,7 @@ function QuickNote() {
 
   const handleToggleBrowse = async () => {
     if (mode === "write") {
-      await loadNotes();
+      await Promise.all([loadNotes(), loadFolders()]);
       setMode("browse");
     } else {
       setMode("write");
@@ -107,6 +129,11 @@ function QuickNote() {
       setIsModified(false);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
+  };
+
+  const handleFilterChange = async (f: FilterType) => {
+    setFilter(f);
+    await loadNotes(f);
   };
 
   const handlePin = async () => {
@@ -182,7 +209,24 @@ function QuickNote() {
 
       {/* Browse mode - note list */}
       {mode === "browse" && !viewNote && (
-        <div ref={listRef} className="note-list">
+        <>
+          <div className="folder-filter"
+            onWheel={(e) => { if (e.deltaY !== 0) { e.preventDefault(); e.currentTarget.scrollLeft += e.deltaY; } }}
+            onMouseDown={(e) => {
+              const el = e.currentTarget;
+              const startX = e.clientX + el.scrollLeft;
+              const onMove = (ev: MouseEvent) => { el.scrollLeft = startX - ev.clientX; };
+              const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+              document.addEventListener("mousemove", onMove);
+              document.addEventListener("mouseup", onUp);
+            }}>
+            <button type="button" className={`filter-chip ${filter === "all" ? "active" : ""}`} onClick={() => handleFilterChange("all")}>全部</button>
+            <button type="button" className={`filter-chip ${filter === "uncategorized" ? "active" : ""}`} onClick={() => handleFilterChange("uncategorized")}>未分类</button>
+            {folders.map((f) => (
+              <button key={f.id} type="button" className={`filter-chip ${filter === f.id ? "active" : ""}`} onClick={() => handleFilterChange(f.id)}>{f.name}</button>
+            ))}
+          </div>
+          <div ref={listRef} className="note-list">
           {notes.length === 0 ? (
             <div className="empty-hint">暂无笔记</div>
           ) : (
@@ -194,19 +238,19 @@ function QuickNote() {
                 className="note-item"
                 onClick={() => selectNote(note)}
               >
-                <div className="note-item-header">
-                  <span className="note-type">笔记</span>
+                <div className="note-item-row">
+                  <span className="note-item-title">{note.title || note.content.split("\n")[0] || "无标题"}</span>
                   <span className="note-time">
                     {new Date(note.updated_at).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit" })}
                     {" "}
                     {new Date(note.updated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </div>
-                <div className="note-item-title">{note.title || note.content.split("\n")[0] || "无标题"}</div>
               </button>
             ))
           )}
-        </div>
+          </div>
+        </>
       )}
 
       {/* Browse mode - view/edit single note */}

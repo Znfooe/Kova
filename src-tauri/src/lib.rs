@@ -1,6 +1,7 @@
 mod services;
 
-use services::db::{Database, Note, Folder, Conversation, ChatMessage};
+use services::db::Database;
+use services::models::{Note, Folder, Conversation, ChatMessage};
 use services::ai::AiService;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;

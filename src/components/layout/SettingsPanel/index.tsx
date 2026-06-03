@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { exit, relaunch } from "@tauri-apps/plugin-process";
-import { db } from "../../lib/db";
-import { ConfirmDialog } from "../dialog/ConfirmDialog";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { db } from "../../../lib/db";
+import { ConfirmDialog } from "../../dialog/ConfirmDialog";
+import { ColorRow, ToggleRow, SliderRow, FontRow, TabSizeRow, ViewModeRow } from "./ui-rows";
 import {
   loadAccent, saveAccent,
   loadPaper, savePaper, applyTheme,
@@ -21,7 +22,7 @@ import {
   DEFAULT_AUTO_SAVE_DELAY, DEFAULT_TAB_SIZE,
   DEFAULT_VIEW_MODE, DEFAULT_SPLIT_RATIO, DEFAULT_QUICK_SHORTCUT,
   type ThemeMode,
-} from "../../lib/theme";
+} from "../../../lib/theme";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -64,7 +65,6 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     localStorage.setItem("fp-close-to-tray", String(closeToTray));
   }, [closeToTray]);
 
-  // Sync colors when mode changes
   useEffect(() => {
     setAccent(loadAccent(mode));
     setPaper(loadPaper(mode));
@@ -131,7 +131,6 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     saveTabSize(size);
   };
 
-  // Record shortcut key
   useEffect(() => {
     if (!recording) return;
     const handler = (e: KeyboardEvent) => {
@@ -184,12 +183,10 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     if (!selected) return;
     try {
       const fontName = `Custom-${Date.now()}`;
-      // Copy font file to data directory
       const dataDir = await db.getDataDir();
       const fileName = (selected as string).split(/[/\\]/).pop() || "font.ttf";
       const destPath = `${dataDir}/fonts/${fileName}`;
       await invoke("copy_file", { src: selected, dest: destPath });
-      // Load font
       await loadCustomFont(fontName, destPath);
       const updated = [...customFonts, fontName];
       setCustomFonts(updated);
@@ -230,7 +227,6 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     const destDir = await open({ directory: true });
     if (!destDir) return;
     try {
-      // Write localStorage settings to data directory first
       const settings: Record<string, string> = {};
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
@@ -240,7 +236,6 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       }
       const dataDir = await invoke<string>("get_data_dir");
       await invoke("write_file", { path: `${dataDir}/kova-settings.json`, content: JSON.stringify(settings, null, 2) });
-      // Backup to zip (includes database, config, and settings)
       const zipPath = await invoke<string>("backup_data", { destDir });
       showMsg(`已备份到 ${zipPath}`, "ok");
     } catch (e) {
@@ -261,9 +256,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     if (!restorePath) return;
     try {
       if (restorePath.endsWith(".zip")) {
-        // Restore from zip archive
         await invoke("restore_data", { srcPath: restorePath });
-        // Try to restore localStorage settings from extracted file
         try {
           const dataDir = await invoke<string>("get_data_dir");
           const settingsPath = `${dataDir}/kova-settings.json`;
@@ -280,16 +273,13 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           // Settings file not in zip, skip
         }
       } else {
-        // Legacy: restore from individual files
         const dir = restorePath.replace(/[^/\\]+$/, "");
-        // Restore database
         const dbPath = restorePath.endsWith(".db") ? restorePath : `${dir}kova.db`;
         try {
           await invoke("restore_data", { srcPath: dbPath });
         } catch {
           // DB not found, skip
         }
-        // Restore settings
         const settingsPath = restorePath.endsWith(".json") ? restorePath : `${dir}kova-settings.json`;
         try {
           const content = await invoke<string>("read_file", { path: settingsPath });
@@ -307,7 +297,6 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       }
       setConfirmRestore(null);
       setRestorePath(null);
-      // Restart app to apply changes
       await relaunch();
     } catch (e) {
       showMsg(String(e), "err");
@@ -328,12 +317,14 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-5 min-h-0 min-w-[260px]">
+        {/* 通用 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">通用</label>
           <ToggleRow label="开机自启动" checked={autoStart} onChange={setAutoStart} />
           <ToggleRow label="关闭时最小化到托盘" checked={closeToTray} onChange={setCloseToTray} />
         </section>
 
+        {/* 外观 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">外观</label>
           <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
@@ -349,6 +340,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           <p className="text-[10px] text-ink-ghost/75">通过标题栏月亮图标切换深浅色模式</p>
         </section>
 
+        {/* 编辑器 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">编辑器</label>
           <ToggleRow label="自动保存" checked={autoSave} onChange={handleAutoSaveChange} />
@@ -358,17 +350,20 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           <TabSizeRow label="Tab 缩进" value={tabSize} defaultVal={DEFAULT_TAB_SIZE} onChange={handleTabSizeChange} />
         </section>
 
+        {/* 窗口 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">窗口</label>
           <ViewModeRow label="默认视图" value={viewMode} defaultVal={DEFAULT_VIEW_MODE} onChange={handleViewModeChange} />
           <SliderRow label="分栏比例" value={splitRatio} min={30} max={70} step={5} unit="%" defaultVal={DEFAULT_SPLIT_RATIO} onChange={handleSplitRatioChange} />
         </section>
 
+        {/* 便签 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">便签</label>
           <ToggleRow label="默认钉住" checked={quickPinned} onChange={handleQuickPinnedChange} />
         </section>
 
+        {/* 快捷键 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">快捷键</label>
           <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
@@ -404,6 +399,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           </div>
         </section>
 
+        {/* 数据存储 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">数据存储</label>
           <div className="flex gap-2">
@@ -416,6 +412,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
           </div>
         </section>
 
+        {/* 备份与恢复 */}
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">备份与恢复</label>
           <div className="flex gap-2">
@@ -454,178 +451,5 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
         />
       )}
     </aside>
-  );
-}
-
-function ColorRow({ label, value, defaultVal, onChange }: { label: string; value: string; defaultVal: string; onChange: (v: string) => void }) {
-  return (
-    <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-      <span className="text-[12px] text-ink-soft">{label}</span>
-      <div className="flex items-center gap-2">
-        <span className="text-[11px] font-mono text-ink-soft">{value}</span>
-        <input
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-7 h-7 rounded border border-paper-deep cursor-pointer"
-          title={`选择${label}`}
-        />
-        {value !== defaultVal && (
-          <button type="button" onClick={() => onChange(defaultVal)}
-            className="text-[10px] text-ink-ghost hover:text-accent transition-colors"
-            title="恢复默认">
-            重置
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25 cursor-pointer select-none"
-      onClick={() => onChange(!checked)}>
-      <span className="text-[12px] text-ink-soft">{label}</span>
-      <div className={`relative w-8 h-[18px] rounded-full transition-colors duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${checked ? "bg-accent" : "bg-paper-deep/50"}`}>
-        <div className={`absolute top-[2px] left-[2px] w-[14px] h-[14px] rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.15)] transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${checked ? "translate-x-[14px]" : "translate-x-0"}`} />
-      </div>
-    </div>
-  );
-}
-
-function SliderRow({ label, value, min, max, step, unit, defaultVal, onChange }: { label: string; value: number; min: number; max: number; step: number; unit: string; defaultVal: number; onChange: (v: number) => void }) {
-  return (
-    <div className="rounded-lg px-2.5 py-2 bg-paper-warm/45 border border-paper-deep/25">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[12px] text-ink-soft">{label}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-mono text-ink-soft">{value}{unit}</span>
-          {value !== defaultVal && (
-            <button type="button" onClick={() => onChange(defaultVal)}
-              className="text-[10px] text-ink-ghost hover:text-accent transition-colors"
-              title="恢复默认">
-              重置
-            </button>
-          )}
-        </div>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        title={label}
-        className="w-full h-1 bg-paper-deep rounded-full appearance-none cursor-pointer accent-accent"
-      />
-    </div>
-  );
-}
-
-function FontRow({ label, value, presetFonts, customFonts, downloadableFonts, defaultVal, onChange, onImport, onDownload }: {
-  label: string; value: string; presetFonts: { name: string; value: string }[]; customFonts: string[];
-  downloadableFonts: { name: string; file: string; url: string }[];
-  defaultVal: string; onChange: (v: string) => void; onImport: () => void; onDownload: (font: { name: string; file: string; url: string }) => void;
-}) {
-  const allFonts = [...presetFonts, ...customFonts.map(f => ({ name: f, value: f }))];
-  const displayName = allFonts.find(f => f.value === value)?.name || (value || "系统默认");
-  const downloadedNames = customFonts.map(f => f.toLowerCase());
-  return (
-    <div className="rounded-lg px-2.5 py-2 bg-paper-warm/45 border border-paper-deep/25">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[12px] text-ink-soft">{label}</span>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-ink-soft">{displayName}</span>
-          {value !== defaultVal && (
-            <button type="button" onClick={() => onChange(defaultVal)}
-              className="text-[10px] text-ink-ghost hover:text-accent transition-colors"
-              title="恢复默认">
-              重置
-            </button>
-          )}
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {presetFonts.map(f => (
-          <button key={f.value} type="button" onClick={() => onChange(f.value)}
-            className={`px-2 py-1 rounded text-[10px] transition-colors ${value === f.value ? "bg-accent-mist text-accent" : "bg-paper-deep/30 text-ink-faint hover:text-ink-soft"}`}>
-            {f.name}
-          </button>
-        ))}
-        {customFonts.map(f => (
-          <button key={f} type="button" onClick={() => onChange(f)}
-            className={`px-2 py-1 rounded text-[10px] transition-colors ${value === f ? "bg-accent-mist text-accent" : "bg-paper-deep/30 text-ink-faint hover:text-ink-soft"}`}>
-            {f}
-          </button>
-        ))}
-        {downloadableFonts.filter(f => !downloadedNames.includes(f.name.replace(/\s+/g, "-").toLowerCase())).map(f => (
-          <button key={f.file} type="button" onClick={() => onDownload(f)}
-            className="px-2 py-1 rounded text-[10px] bg-paper-deep/30 text-ink-faint hover:text-accent transition-colors">
-            ↓ {f.name}
-          </button>
-        ))}
-        <button type="button" onClick={onImport}
-          className="px-2 py-1 rounded text-[10px] bg-paper-deep/30 text-ink-faint hover:text-accent transition-colors">
-          + 导入
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TabSizeRow({ label, value, defaultVal, onChange }: { label: string; value: number; defaultVal: number; onChange: (v: number) => void }) {
-  return (
-    <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-      <span className="text-[12px] text-ink-soft">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <div className="flex gap-1">
-          {[2, 4].map(size => (
-            <button key={size} type="button" onClick={() => onChange(size)}
-              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${value === size ? "bg-accent-mist text-accent" : "bg-paper-deep/30 text-ink-faint hover:text-ink-soft"}`}>
-              {size}
-            </button>
-          ))}
-        </div>
-        {value !== defaultVal && (
-          <button type="button" onClick={() => onChange(defaultVal)}
-            className="text-[10px] text-ink-ghost hover:text-accent transition-colors"
-            title="恢复默认">
-            重置
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ViewModeRow({ label, value, defaultVal, onChange }: { label: string; value: string; defaultVal: string; onChange: (v: string) => void }) {
-  const modes = [
-    { value: "edit", name: "编辑" },
-    { value: "split", name: "分栏" },
-    { value: "preview", name: "预览" },
-  ];
-  return (
-    <div className="flex items-center justify-between h-9 rounded-lg px-2.5 bg-paper-warm/45 border border-paper-deep/25">
-      <span className="text-[12px] text-ink-soft">{label}</span>
-      <div className="flex items-center gap-1.5">
-        <div className="flex gap-1">
-          {modes.map(m => (
-            <button key={m.value} type="button" onClick={() => onChange(m.value)}
-              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${value === m.value ? "bg-accent-mist text-accent" : "bg-paper-deep/30 text-ink-faint hover:text-ink-soft"}`}>
-              {m.name}
-            </button>
-          ))}
-        </div>
-        {value !== defaultVal && (
-          <button type="button" onClick={() => onChange(defaultVal)}
-            className="text-[10px] text-ink-ghost hover:text-accent transition-colors"
-            title="恢复默认">
-            重置
-          </button>
-        )}
-      </div>
-    </div>
   );
 }
