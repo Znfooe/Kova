@@ -96,8 +96,27 @@ fn import_md_file(path: String) -> Result<Note, String> {
 }
 
 #[tauri::command]
+fn import_file(path: String) -> Result<Note, String> {
+    if path.ends_with(".html") || path.ends_with(".htm") {
+        db().import_html_file(&path)
+    } else {
+        db().import_md_file(&path)
+    }
+}
+
+#[tauri::command]
 fn export_note(id: String, dest_dir: String) -> Result<String, String> {
     db().export_note_as_md(&id, &dest_dir)
+}
+
+#[tauri::command]
+fn export_note_html(id: String, dest_dir: String) -> Result<String, String> {
+    db().export_note_as_html(&id, &dest_dir)
+}
+
+#[tauri::command]
+fn export_note_txt(id: String, dest_dir: String) -> Result<String, String> {
+    db().export_note_as_txt(&id, &dest_dir)
 }
 
 #[tauri::command]
@@ -108,6 +127,36 @@ fn backup_data(dest_dir: String) -> Result<String, String> {
 #[tauri::command]
 fn restore_data(src_path: String) -> Result<(), String> {
     db().restore(&src_path)
+}
+
+#[tauri::command]
+fn abort_ai() {
+    services::ai::abort_ai();
+}
+
+#[tauri::command]
+fn toggle_conversation_pinned(id: String) -> Result<bool, String> {
+    db().toggle_conversation_pinned(&id)
+}
+
+#[tauri::command]
+fn export_conversation(id: String, dest_dir: String) -> Result<String, String> {
+    let conv = db().get_conversations()?.into_iter().find(|c| c.id == id).ok_or("对话不存在")?;
+    let messages = db().get_messages(&id)?;
+    let mut md = format!("# {}\n\n", conv.title);
+    for msg in &messages {
+        let role = match msg.role.as_str() {
+            "user" => "👤 用户",
+            "assistant" => "🤖 AI",
+            _ => continue,
+        };
+        md.push_str(&format!("**{}**\n\n{}\n\n---\n\n", role, msg.content));
+    }
+    let safe_name: String = conv.title.chars().take(40).filter(|c| c.is_alphanumeric() || *c == ' ' || *c == '-' || *c == '_').collect();
+    let file_name = format!("{}_{}.md", &conv.id[..8], if safe_name.is_empty() { "conversation" } else { &safe_name });
+    let path = std::path::PathBuf::from(&dest_dir).join(&file_name);
+    std::fs::write(&path, &md).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -220,6 +269,8 @@ async fn ai_chat_stream(
     max_context_messages: usize,
     enable_summary: bool,
     enable_thinking: bool,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
 ) -> Result<ChatMessage, String> {
     use tauri::Emitter;
 
@@ -234,6 +285,7 @@ async fn ai_chat_stream(
     let _reply = ai().chat_stream(
         db(), &conversation_id, &message, &base_url, &api_key, &model,
         &system_prompt, max_context_messages, enable_summary, &conv_summary, enable_thinking,
+        temperature, max_tokens,
         move |event_type, data| {
             let _ = app.emit("ai-stream", serde_json::json!({
                 "type": event_type,
@@ -495,8 +547,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             create_note, get_notes, update_note, delete_note,
             create_folder, get_folders, update_folder, delete_folder, move_note_to_folder,
-            get_data_dir, set_data_dir, import_md_file, export_note,
-            backup_data, restore_data, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
+            get_data_dir, set_data_dir, import_md_file, import_file, export_note, export_note_html, export_note_txt,
+            backup_data, restore_data, abort_ai, toggle_conversation_pinned, export_conversation, write_file, read_file, copy_file, download_font, get_window_size, save_quick_window_size,
             toggle_window, get_cursor_position, create_quick_window, update_quick_shortcut,
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,

@@ -221,6 +221,21 @@ export function Sidebar({
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(new Set());
   const [allMenuPos, setAllMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const [sortField, setSortField] = useState<string>(() => localStorage.getItem("kova-sort-field") || "updated_at");
+  const [sortDir, setSortDir] = useState<string>(() => localStorage.getItem("kova-sort-dir") || "desc");
+  const [showSortMenu, setShowSortMenu] = useState(false);
+
+  const sortedNotes = [...filteredNotes].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === "title") {
+      cmp = (a.title || "").localeCompare(b.title || "", "zh-CN");
+    } else if (sortField === "created_at") {
+      cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    } else {
+      cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
+    }
+    return sortDir === "desc" ? -cmp : cmp;
+  });
 
   // On mount, expand the path to the last selected note's folder
   useEffect(() => {
@@ -390,12 +405,12 @@ export function Sidebar({
   const handleImport = async () => {
     const selected = await open({
       multiple: true,
-      filters: [{ name: "文档", extensions: ["md", "txt"] }],
+      filters: [{ name: "文档", extensions: ["md", "txt", "html", "htm"] }],
     });
     if (!selected) return;
     const paths = Array.isArray(selected) ? selected : [selected];
     for (const path of paths) {
-      await db.importMd(path);
+      await db.importFile(path);
     }
     onImported();
   };
@@ -405,7 +420,7 @@ export function Sidebar({
       <SearchBar value={search} onChange={onSearchChange} />
 
       {/* Folder list + Note list in one scrollable area */}
-      <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]" onDragOver={(e) => e.preventDefault()}>
+      <div className="flex-1 overflow-y-auto min-h-0 [scrollbar-gutter:stable]" onDragOver={(e) => e.preventDefault()} onClick={() => setShowSortMenu(false)}>
         {/* Folder section */}
         {/* "未分类" standalone row */}
         <div className="px-2 pt-3 pb-1.5 flex items-center justify-between shrink-0">
@@ -481,7 +496,35 @@ export function Sidebar({
 
         {/* Note list */}
         <div className="px-5 pt-3 pb-1.5 flex items-center justify-between shrink-0">
-          <span className="text-xs text-ink-soft">{filteredNotes.length} 条笔记</span>
+          <div className="flex items-center gap-1 relative">
+            <span className="text-xs text-ink-soft">{filteredNotes.length} 条笔记</span>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setShowSortMenu(!showSortMenu); }}
+              className="w-4 h-4 flex items-center justify-center text-ink-ghost hover:text-accent transition-colors"
+              title="排序">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18M3 12h12M3 18h6" /></svg>
+            </button>
+            {showSortMenu && (
+              <div className="absolute top-full left-0 mt-1 z-30 bg-cloud border border-paper-deep shadow-lg rounded-lg py-1 w-[140px] animate-dropdown" onClick={(e) => e.stopPropagation()}>
+                {[
+                  { field: "updated_at", label: "更新时间" },
+                  { field: "created_at", label: "创建时间" },
+                  { field: "title", label: "标题" },
+                ].map(opt => (
+                  <button key={opt.field} type="button"
+                    onClick={() => { setSortField(opt.field); localStorage.setItem("kova-sort-field", opt.field); setShowSortMenu(false); }}
+                    className={`w-full text-left px-3 py-1 text-[11px] transition-colors ${sortField === opt.field ? "text-accent bg-accent-mist" : "text-ink-soft hover:bg-paper-warm"}`}>
+                    {opt.label}
+                  </button>
+                ))}
+                <div className="h-px bg-paper-deep/30 mx-2 my-1" />
+                <button type="button"
+                  onClick={() => { const next = sortDir === "desc" ? "asc" : "desc"; setSortDir(next); localStorage.setItem("kova-sort-dir", next); setShowSortMenu(false); }}
+                  className="w-full text-left px-3 py-1 text-[11px] text-ink-soft hover:bg-paper-warm transition-colors">
+                  {sortDir === "desc" ? "↓ 降序" : "↑ 升序"}
+                </button>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-0.5">
             <button
               type="button"
@@ -516,7 +559,7 @@ export function Sidebar({
             </button>
           </div>
         </div>
-        <NoteList notes={filteredNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} />
+        <NoteList notes={sortedNotes} selectedId={selectedId} selectedIds={selectedIds} onSelectedIdsChange={onSelectedIdsChange} onSelect={onSelectNote} onDeselect={onDeselectNote} onDelete={onDelete} folders={folders} onMoveMultipleToFolder={onMoveMultipleToFolder} />
       </div>
 
       {/* Import button */}

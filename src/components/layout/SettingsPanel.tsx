@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { exit } from "@tauri-apps/plugin-process";
+import { exit, relaunch } from "@tauri-apps/plugin-process";
 import { db } from "../../lib/db";
 import { ConfirmDialog } from "../dialog/ConfirmDialog";
 import {
@@ -308,7 +308,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
       setConfirmRestore(null);
       setRestorePath(null);
       // Restart app to apply changes
-      await exit(0);
+      await relaunch();
     } catch (e) {
       showMsg(String(e), "err");
     }
@@ -318,7 +318,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
   const defaultPaper = mode === "dark" ? DEFAULT_PAPER_DARK : DEFAULT_PAPER_LIGHT;
 
   return (
-    <aside className="w-full h-full shrink-0 border-l-2 border-paper-deep/60 bg-paper/92 backdrop-blur-sm flex flex-col">
+    <aside className="w-full h-full shrink-0 border-l-2 border-paper-deep/60 bg-paper/92 backdrop-blur-sm flex flex-col min-w-[260px]">
       <div className="flex items-center justify-between h-11 px-4 border-b border-paper-deep/25 shrink-0">
         <h2 className="text-[13px] font-medium text-ink-soft">应用设置</h2>
         <button type="button" onClick={onClose}
@@ -327,7 +327,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 min-h-0">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-5 min-h-0 min-w-[260px]">
         <section className="space-y-2">
           <label className="block text-[11px] text-ink-faint">通用</label>
           <ToggleRow label="开机自启动" checked={autoStart} onChange={setAutoStart} />

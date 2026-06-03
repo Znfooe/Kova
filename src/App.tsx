@@ -264,12 +264,18 @@ export default function App() {
 
   const handleUpdateTitle = (id: string, title: string) => {
     update(id, { title });
-    if (selectedNote?.id === id) setSelectedNote((prev) => prev ? { ...prev, title } : null);
+    if (selectedNote?.id === id) {
+      const now = new Date().toISOString();
+      setSelectedNote((prev) => prev ? { ...prev, title, updated_at: now } : null);
+    }
   };
 
   const handleUpdateContent = (id: string, content: string) => {
     update(id, { content });
-    if (selectedNote?.id === id) setSelectedNote((prev) => prev ? { ...prev, content } : null);
+    if (selectedNote?.id === id) {
+      const now = new Date().toISOString();
+      setSelectedNote((prev) => prev ? { ...prev, content, updated_at: now } : null);
+    }
   };
 
   const filteredNotes = search
@@ -364,9 +370,18 @@ export default function App() {
 
         <div className="flex-1 flex flex-col min-w-0">
           {renderDetail()}
-          <div className="h-7 px-4 flex items-center justify-between text-xs text-ink-ghost border-t border-paper-deep/20 bg-paper/30 shrink-0">
-            <span>{filteredNotes.length} 条笔记</span>
-            <span>本地存储 · SQLite</span>
+          <div className="h-7 px-4 flex items-center justify-between text-[11px] text-ink-ghost border-t border-paper-deep/20 bg-paper/30 shrink-0">
+            {selectedNote ? (
+              <>
+                <span>{(selectedNote.title + selectedNote.content).length} 字 · {selectedNote.tags.length > 0 ? selectedNote.tags.join(", ") : "无标签"}</span>
+                <span>最后保存 {new Date(selectedNote.updated_at).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+              </>
+            ) : (
+              <>
+                <span>{filteredNotes.length} 条笔记</span>
+                <span>Kova v0.1.0</span>
+              </>
+            )}
           </div>
         </div>
 

@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use super::db::Database;
+
+// Global abort flag for stopping AI generation
+static ABORT_FLAG: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
 // ---- OpenAI-compatible API types ----
 
@@ -15,6 +20,10 @@ pub struct ChatRequest {
     pub stream: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enable_thinking: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,6 +114,18 @@ pub struct AiService {
     client: reqwest::Client,
 }
 
+pub fn abort_ai() {
+    ABORT_FLAG.store(true, Ordering::SeqCst);
+}
+
+fn is_aborted() -> bool {
+    ABORT_FLAG.load(Ordering::SeqCst)
+}
+
+fn reset_abort() {
+    ABORT_FLAG.store(false, Ordering::SeqCst);
+}
+
 impl AiService {
     pub fn new() -> Self {
         Self {
@@ -173,6 +194,8 @@ impl AiService {
                 tool_choice: None,
                 stream: None,
                 enable_thinking: None,
+                temperature: None,
+                max_tokens: None,
             };
 
             let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -257,12 +280,15 @@ impl AiService {
         _enable_summary: bool,
         conversation_summary: &str,
         enable_thinking: bool,
+        temperature: Option<f32>,
+        max_tokens: Option<u32>,
         on_event: F,
     ) -> Result<String, String>
     where
         F: Fn(&str, &str) + Send + Sync,
     {
         log::info!("[AI Stream] Starting chat_stream for conversation: {}", conversation_id);
+        reset_abort();
 
         // Save user message
         db.add_message(conversation_id, "user", user_message, None, None)?;
@@ -314,6 +340,11 @@ impl AiService {
         }
 
         for _ in 0..10 {
+            if is_aborted() {
+                log::info!("[AI Stream] Aborted by user");
+                on_event("done", "");
+                return Ok("已停止生成".to_string());
+            }
             let request = ChatRequest {
                 model: model.to_string(),
                 messages: api_messages.clone(),
@@ -321,6 +352,8 @@ impl AiService {
                 tool_choice: None,
                 stream: Some(true),
                 enable_thinking: if enable_thinking { Some(true) } else { None },
+                temperature,
+                max_tokens,
             };
 
             let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
@@ -354,7 +387,7 @@ impl AiService {
             let mut thinking_content = String::new();
             let mut done = false;
             while let Some(chunk_result) = stream.next().await {
-                if done { break; }
+                if done || is_aborted() { break; }
                 let chunk = chunk_result.map_err(|e| format!("流读取失败: {}", e))?;
                 buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -446,6 +479,10 @@ impl AiService {
 
                 // Execute tool calls
                 for tc in &tool_calls_vec {
+                    if is_aborted() {
+                        log::info!("[AI Stream] Aborted before tool execution");
+                        break;
+                    }
                     on_event("tool_call", &format!("{{\"name\":\"{}\",\"arguments\":{}}}", tc.function.name, tc.function.arguments));
                     let result = self.execute_tool(db, &tc.function.name, &tc.function.arguments).await;
                     let result_content = match result {
@@ -469,6 +506,12 @@ impl AiService {
                         tool_calls: None,
                         tool_call_id: Some(tc.id.clone()),
                     });
+                }
+                // Check abort after tool execution
+                if is_aborted() {
+                    log::info!("[AI Stream] Aborted after tool execution");
+                    on_event("done", "");
+                    return Ok("已停止生成".to_string());
                 }
                 // Continue loop
             } else {

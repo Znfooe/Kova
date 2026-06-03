@@ -141,14 +141,15 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
     setMenuNote(null);
   };
 
-  const handleExportSelected = async () => {
+  const handleExportSelected = async (format: "md" | "html" | "txt" = "md") => {
     const ids = selectedIds.size > 0 ? [...selectedIds] : (menuNote ? [menuNote.id] : []);
     if (ids.length === 0) return;
     const destDir = await open({ directory: true });
     if (!destDir) return;
+    const exportFn = format === "html" ? db.exportNoteHtml : format === "txt" ? db.exportNoteTxt : db.exportNote;
     const paths: string[] = [];
     for (const id of ids) {
-      const path = await db.exportNote(id, destDir as string);
+      const path = await exportFn(id, destDir as string);
       paths.push(path);
     }
     setConfirmState({
@@ -226,9 +227,19 @@ export function NoteList({ notes, selectedId, selectedIds, onSelectedIdsChange, 
         onClick: () => handleMoveToFolder(note),
       },
       {
-        label: count > 1 ? `导出选中（${count} 条）` : "导出文档",
+        label: count > 1 ? `导出 Markdown（${count} 条）` : "导出 Markdown",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>,
-        onClick: () => handleExportSelected(),
+        onClick: () => handleExportSelected("md"),
+      },
+      {
+        label: count > 1 ? `导出 HTML（${count} 条）` : "导出 HTML",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></svg>,
+        onClick: () => handleExportSelected("html"),
+      },
+      {
+        label: count > 1 ? `导出 TXT（${count} 条）` : "导出 TXT",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></svg>,
+        onClick: () => handleExportSelected("txt"),
       },
       {
         label: count > 1 ? `删除（${count} 条）` : "删除",

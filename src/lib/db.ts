@@ -56,6 +56,15 @@ export const db = {
   importMd: (path: string) =>
     invoke<Note>("import_md_file", { path }),
 
+  importFile: (path: string) =>
+    invoke<Note>("import_file", { path }),
+
   exportNote: (id: string, destDir: string) =>
     invoke<string>("export_note", { id, destDir }),
+
+  exportNoteHtml: (id: string, destDir: string) =>
+    invoke<string>("export_note_html", { id, destDir }),
+
+  exportNoteTxt: (id: string, destDir: string) =>
+    invoke<string>("export_note_txt", { id, destDir }),
 };

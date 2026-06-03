@@ -3,10 +3,13 @@ import { flushSync } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
+import { useDraggable } from "../../hooks/useDraggable";
 
 interface Conversation {
   id: string;
   title: string;
+  summary: string;
+  pinned: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -31,6 +34,8 @@ interface AIProfile {
   max_context_messages: number;
   enable_summary: boolean;
   enable_thinking: boolean;
+  temperature: number;
+  max_tokens: number;
 }
 
 interface AIChatPanelProps {
@@ -59,6 +64,26 @@ function ThinkingBlock({ content }: { content: string }) {
   );
 }
 
+function classifyError(err: unknown): { icon: string; title: string; message: string } {
+  const msg = String(err);
+  if (msg.includes("请求失败") || msg.includes("fetch") || msg.includes("network") || msg.includes("ECONNREFUSED") || msg.includes("timeout")) {
+    return { icon: "🌐", title: "网络错误", message: "无法连接到 AI 服务器，请检查网络和 API 地址" };
+  }
+  if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("invalid_api_key")) {
+    return { icon: "🔑", title: "认证失败", message: "API Key 无效，请检查配置" };
+  }
+  if (msg.includes("429") || msg.includes("rate") || msg.includes("quota") || msg.includes("limit")) {
+    return { icon: "⏳", title: "配额不足", message: "API 调用频率超限或余额不足，请稍后再试" };
+  }
+  if (msg.includes("404") || msg.includes("model")) {
+    return { icon: "🤖", title: "模型错误", message: "模型不存在或不可用，请检查模型名称" };
+  }
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503")) {
+    return { icon: "🔧", title: "服务器错误", message: "AI 服务器内部错误，请稍后再试" };
+  }
+  return { icon: "❌", title: "未知错误", message: msg.replace(/^错误:\s*/, "") };
+}
+
 export function AIChatPanel({ onClose }: AIChatPanelProps) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConvId, setCurrentConvId] = useState<string | null>(null);
@@ -73,8 +98,16 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
   const [editingConvId, setEditingConvId] = useState<string | null>(null);
   const [editingConvTitle, setEditingConvTitle] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteProfileConfirmId, setDeleteProfileConfirmId] = useState<string | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const lastUserMsgRef = useRef<string>("");
+  const convDrag = useDraggable();
+  const profileDrag = useDraggable();
+  const abortRef = useRef<boolean>(false);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   const activeProfile = profiles.find(p => p.id === activeProfileId);
 
@@ -141,7 +174,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
   };
 
   const handleNewProfile = () => {
-    setEditProfile({ id: "", name: "", base_url: "", api_key: "", model: "", system_prompt: "", max_context_messages: 20, enable_summary: true, enable_thinking: false });
+    setEditProfile({ id: "", name: "", base_url: "", api_key: "", model: "", system_prompt: "", max_context_messages: 20, enable_summary: true, enable_thinking: true, temperature: 1.0, max_tokens: 0 });
   };
 
   const handleNewConversation = async () => {
@@ -168,6 +201,22 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
       const remaining = conversations.filter((c) => c.id !== id);
       setCurrentConvId(remaining.length > 0 ? remaining[0].id : null);
     }
+  };
+
+  const handleTogglePinned = async (id: string) => {
+    const pinned = await invoke<boolean>("toggle_conversation_pinned", { id });
+    setConversations((prev) => {
+      const updated = prev.map((c) => c.id === id ? { ...c, pinned } : c);
+      return [...updated].sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+    });
+  };
+
+  const handleExportConversation = async (id: string) => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const destDir = await open({ directory: true });
+    if (!destDir) return;
+    const path = await invoke<string>("export_conversation", { id, destDir });
+    alert(`已导出到：${path}`);
   };
 
   const handleStartRename = (conv: Conversation) => {
@@ -201,6 +250,8 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
     const convId = currentConvId;
     setInput("");
     setLoading(true);
+    abortRef.current = false;
+    lastUserMsgRef.current = userMsg;
 
     // Optimistic add user message
     setMessages((prev) => [...prev, {
@@ -282,6 +333,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
     };
 
     const unlisten = await listen<{ type: string; data: string; conversation_id: string }>("ai-stream", (event) => {
+      if (abortRef.current) return;
       if (event.payload.conversation_id !== convId) return;
       const { type, data } = event.payload;
 
@@ -329,6 +381,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
         ));
       }
     });
+    unlistenRef.current = unlisten;
 
     try {
       console.log("[AI Chat] Starting ai_chat_stream with profile:", activeProfile.name);
@@ -342,6 +395,8 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
         maxContextMessages: activeProfile.max_context_messages || 0,
         enableSummary: activeProfile.enable_summary ?? true,
         enableThinking: activeProfile.enable_thinking ?? false,
+        temperature: activeProfile.temperature || undefined,
+        maxTokens: activeProfile.max_tokens || undefined,
       });
       console.log("[AI Chat] ai_chat_stream completed, streamedContent length:", streamedContent.length);
 
@@ -365,13 +420,13 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
         );
       }
     } catch (err) {
-      // Remove streaming placeholder and show error
+      const error = classifyError(err);
       setMessages((prev) => prev.filter((m) => m.id !== streamingId));
       setMessages((prev) => [...prev, {
         id: Date.now().toString(),
         conversation_id: convId,
         role: "system",
-        content: `错误: ${err}`,
+        content: `${error.icon} ${error.title}\n${error.message}`,
         tool_calls: null,
         tool_call_id: null,
         created_at: new Date().toISOString(),
@@ -388,6 +443,33 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  const handleStop = () => {
+    abortRef.current = true;
+    unlistenRef.current?.();
+    invoke("abort_ai").catch(() => {});
+    // Finalize streaming message synchronously
+    flushSync(() => {
+      setMessages((prev) => prev.map((m) =>
+        m.id.startsWith("streaming-") ? { ...m, id: `stopped-${Date.now()}`, content: m.content || "（已停止）" } : m
+      ));
+      setLoading(false);
+    });
+    inputRef.current?.focus();
+  };
+
+  const handleRegenerate = () => {
+    if (!lastUserMsgRef.current || !currentConvId || loading) return;
+    // Remove last assistant message
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.role === "assistant") return prev.slice(0, -1);
+      return prev;
+    });
+    // Re-send the last user message
+    setInput(lastUserMsgRef.current);
+    setTimeout(() => handleSend(), 50);
   };
 
   const handleCreateNoteFromMsg = async (content: string) => {
@@ -421,7 +503,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
     return { thinking: null, main: content };
   };
 
-  const renderMessage = (msg: ChatMessage) => {
+  const renderMessage = (msg: ChatMessage, index: number) => {
     if (msg.role === "system") {
       return (
         <div key={msg.id} className="flex justify-center my-2">
@@ -458,8 +540,10 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
                 <div className="markdown-body text-[12px] select-text [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                   <MarkdownPreview content={main} />
                 </div>
-              ) : (
+              ) : loading ? (
                 <span className="text-ink-ghost animate-pulse">正在思考...</span>
+              ) : (
+                <span className="text-ink-ghost">（已停止）</span>
               )
             )}
           </div>
@@ -475,15 +559,28 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
               复制
             </button>
             {!isUser && (
-              <button
-                type="button"
-                onClick={() => handleCreateNoteFromMsg(msg.content)}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:text-accent hover:bg-accent-mist/50 transition-colors"
-                title="创建笔记"
-              >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-                创建笔记
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleCreateNoteFromMsg(msg.content)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:text-accent hover:bg-accent-mist/50 transition-colors"
+                  title="创建笔记"
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+                  创建笔记
+                </button>
+                {index === messages.length - 1 && !loading && lastUserMsgRef.current && (
+                  <button
+                    type="button"
+                    onClick={handleRegenerate}
+                    className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] text-ink-ghost hover:text-accent hover:bg-accent-mist/50 transition-colors"
+                    title="重新生成"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
+                    重新生成
+                  </button>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -497,7 +594,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
   };
 
   return (
-    <div className="w-full h-full flex flex-col border-l border-paper-deep/30 bg-paper/40 relative" onClick={handleContainerClick}>
+    <div className="w-full h-full flex flex-col border-l border-paper-deep/30 bg-paper/40 relative min-w-[260px]" onClick={handleContainerClick}>
       {/* Header */}
       <div className="h-10 px-3 flex items-center justify-between border-b border-paper-deep/25 shrink-0" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2">
@@ -514,6 +611,14 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
           </button>
         </div>
         <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setShowSearch(!showSearch); if (showSearch) setSearchQuery(""); }}
+            className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${showSearch ? "bg-accent-mist text-accent" : "text-ink-ghost hover:text-accent hover:bg-accent-mist"}`}
+            title="搜索消息"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+          </button>
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); handleNewConversation(); }}
@@ -544,6 +649,29 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
           </button>
         </div>
       </div>
+
+      {/* Search bar */}
+      {showSearch && (
+        <div className="px-3 py-1.5 border-b border-paper-deep/25 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1.5 bg-paper-warm/60 border border-paper-deep/30 rounded-lg px-2 py-1">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink-ghost shrink-0"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="搜索对话内容..."
+              autoFocus
+              className="flex-1 min-w-0 bg-transparent text-[11px] text-ink-soft placeholder:text-ink-ghost focus:outline-none"
+            />
+            {searchQuery && (
+              <button type="button" onClick={() => setSearchQuery("")}
+                className="text-ink-ghost hover:text-accent transition-colors">
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Settings dropdown - full width below header */}
       {showSettings && (
@@ -585,7 +713,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteProfile(p.id); }}
+                        onClick={(e) => { e.stopPropagation(); setDeleteProfileConfirmId(p.id); }}
                         className="w-5 h-5 flex items-center justify-center rounded text-ink-ghost hover:text-danger hover:bg-danger-bg transition-colors"
                         title="删除"
                       >
@@ -673,6 +801,7 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
                       type="number"
                       value={editProfile.max_context_messages}
                       onChange={(e) => setEditProfile((p) => p ? { ...p, max_context_messages: Number(e.target.value) } : p)}
+                      onFocus={(e) => e.target.select()}
                       placeholder="20"
                       min={0}
                       className="w-full bg-paper-warm/60 border border-paper-deep/30 rounded px-2.5 py-1.5 text-xs text-ink-soft placeholder:text-ink-ghost focus:outline-none focus:border-accent/40"
@@ -698,6 +827,36 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
                       className="w-3.5 h-3.5 accent-accent"
                     />
                     <label htmlFor="enable-thinking" className="text-[10px] text-ink-faint">深度思考</label>
+                  </div>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-ink-faint block mb-0.5">温度 (temperature)</label>
+                    <input
+                      type="number"
+                      value={editProfile.temperature}
+                      onChange={(e) => setEditProfile((p) => p ? { ...p, temperature: Number(e.target.value) } : p)}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="1.0"
+                      min={0}
+                      max={2}
+                      step={0.1}
+                      className="w-full bg-paper-warm/60 border border-paper-deep/30 rounded px-2.5 py-1.5 text-xs text-ink-soft placeholder:text-ink-ghost focus:outline-none focus:border-accent/40"
+                    />
+                    <span className="text-[9px] text-ink-ghost mt-0.5 block">0-2，越高越有创造性</span>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-ink-faint block mb-0.5">最大 tokens</label>
+                    <input
+                      type="number"
+                      value={editProfile.max_tokens}
+                      onChange={(e) => setEditProfile((p) => p ? { ...p, max_tokens: Number(e.target.value) } : p)}
+                      onFocus={(e) => e.target.select()}
+                      placeholder="0"
+                      min={0}
+                      className="w-full bg-paper-warm/60 border border-paper-deep/30 rounded px-2.5 py-1.5 text-xs text-ink-soft placeholder:text-ink-ghost focus:outline-none focus:border-accent/40"
+                    />
+                    <span className="text-[9px] text-ink-ghost mt-0.5 block">0 表示不限制</span>
                   </div>
                 </div>
                 <div className="flex justify-end gap-2 mt-3">
@@ -739,9 +898,28 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
                     onClick={(e) => e.stopPropagation()}
                   />
                 ) : (
-                  <span className="text-xs truncate flex-1">{conv.title}</span>
+                  <span className="text-xs truncate flex-1 flex items-center gap-1">
+                    {conv.pinned && <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" className="text-accent shrink-0"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z" /></svg>}
+                    {conv.title}
+                  </span>
                 )}
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleTogglePinned(conv.id); }}
+                    className={`w-4 h-4 flex items-center justify-center ${conv.pinned ? "text-accent" : "text-ink-ghost hover:text-accent"}`}
+                    title={conv.pinned ? "取消置顶" : "置顶"}
+                  >
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill={conv.pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2z" /></svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleExportConversation(conv.id); }}
+                    className="w-4 h-4 flex items-center justify-center text-ink-ghost hover:text-accent"
+                    title="导出对话"
+                  >
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
+                  </button>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleStartRename(conv); }}
@@ -775,7 +953,19 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
             </svg>
             <p className="text-xs">开始和 AI 对话吧</p>
           </div>
-        ) : (
+        ) : searchQuery.trim() ? (() => {
+          const filtered = messages.filter(m => m.role !== "system" && m.content.toLowerCase().includes(searchQuery.toLowerCase()));
+          return filtered.length > 0 ? (
+            <>
+              <p className="text-[10px] text-ink-ghost text-center py-1">找到 {filtered.length} 条消息</p>
+              {filtered.map(renderMessage)}
+            </>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <p className="text-xs text-ink-ghost">没有找到匹配的消息</p>
+            </div>
+          );
+        })() : (
           messages.map(renderMessage)
         )}
         <div ref={messagesEndRef} />
@@ -795,24 +985,38 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
             className="flex-1 resize-none bg-paper-warm/60 border border-paper-deep/30 rounded-lg px-3 py-2 text-xs text-ink-soft placeholder:text-ink-ghost focus:outline-none focus:border-accent/40 disabled:opacity-50"
             style={{ maxHeight: "80px" }}
           />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={!input.trim() || !currentConvId || loading}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white hover:opacity-90 transition-opacity disabled:opacity-30 shrink-0"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 2L11 13" />
-              <path d="M22 2L15 22L11 13L2 9L22 2Z" />
-            </svg>
-          </button>
+          {loading ? (
+            <button
+              type="button"
+              onClick={handleStop}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-danger text-white hover:opacity-90 transition-opacity shrink-0"
+              title="停止生成"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="3" /></svg>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={!input.trim() || !currentConvId}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-accent text-white hover:opacity-90 transition-opacity disabled:opacity-30 shrink-0"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 2L11 13" />
+                <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Delete confirmation dialog */}
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setDeleteConfirmId(null)}>
-          <div className="bg-cloud rounded-xl border border-paper-deep shadow-xl p-4 w-[280px] animate-view-fade" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-cloud rounded-xl border border-paper-deep shadow-xl p-4 w-[280px] animate-view-fade cursor-move"
+            style={{ transform: `translate(${convDrag.offset.x}px, ${convDrag.offset.y}px)` }}
+            onMouseDown={convDrag.onMouseDown}
+            onClick={(e) => e.stopPropagation()}>
             <p className="text-sm text-ink-soft mb-3">确定删除这个对话吗？删除后无法恢复。</p>
             <div className="flex justify-end gap-2">
               <button
@@ -823,6 +1027,29 @@ export function AIChatPanel({ onClose }: AIChatPanelProps) {
               <button
                 type="button"
                 onClick={() => { handleDeleteConversation(deleteConfirmId); setDeleteConfirmId(null); }}
+                className="px-3 py-1 text-xs text-white bg-danger rounded hover:opacity-90 transition-colors"
+              >删除</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteProfileConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={() => setDeleteProfileConfirmId(null)}>
+          <div className="bg-cloud rounded-xl border border-paper-deep shadow-xl p-4 w-[280px] animate-view-fade cursor-move"
+            style={{ transform: `translate(${profileDrag.offset.x}px, ${profileDrag.offset.y}px)` }}
+            onMouseDown={profileDrag.onMouseDown}
+            onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-ink-soft mb-3">确定删除这个 AI 配置吗？</p>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteProfileConfirmId(null)}
+                className="px-3 py-1 text-xs text-ink-soft bg-paper-warm/60 border border-paper-deep/30 rounded hover:bg-paper-warm transition-colors"
+              >取消</button>
+              <button
+                type="button"
+                onClick={() => { handleDeleteProfile(deleteProfileConfirmId); setDeleteProfileConfirmId(null); }}
                 className="px-3 py-1 text-xs text-white bg-danger rounded hover:opacity-90 transition-colors"
               >删除</button>
             </div>
