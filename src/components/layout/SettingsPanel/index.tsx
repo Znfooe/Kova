@@ -91,6 +91,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     setFontSize(size);
     saveFontSize(size);
     applyTheme(mode);
+    window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "font-size", value: size } }));
   };
 
   const handleLineHeightChange = (height: number) => {
@@ -114,6 +115,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
     setFontWeight(weight);
     saveFontWeight(weight);
     applyTheme(mode);
+    window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "font-weight", value: weight } }));
   };
 
   const handleAutoSaveChange = (enabled: boolean) => {
@@ -129,6 +131,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
   const handleTabSizeChange = (size: number) => {
     setTabSize(size);
     saveTabSize(size);
+    window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "tab-size", value: size } }));
   };
 
   useEffect(() => {

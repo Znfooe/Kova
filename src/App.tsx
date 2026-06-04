@@ -56,6 +56,7 @@ export default function App() {
         const next = getZoomDelta(loadZoom(), e.deltaY < 0 ? 1 : -1);
         saveZoom(next);
         getCurrentWebview().setZoom(next).catch(() => {});
+        window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "zoom", value: next } }));
       }
     };
     const onKey = (e: KeyboardEvent) => {
@@ -63,6 +64,7 @@ export default function App() {
         e.preventDefault();
         saveZoom(1);
         getCurrentWebview().setZoom(1).catch(() => {});
+        window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "zoom", value: 1 } }));
       }
     };
     window.addEventListener("wheel", onWheel, { passive: false });
@@ -302,7 +304,7 @@ export default function App() {
         </div>
 
         {/* Settings panel */}
-        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSettings ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
+        <div className="relative shrink-0 flex overflow-hidden" style={{ width: showSettings && !showAI ? settings.width : 0, transition: isDragging ? "none" : "width 0.5s cubic-bezier(0.22,1,0.36,1)" }}>
           <div className="w-1 shrink-0 bg-paper-deep/30 cursor-col-resize hover:bg-accent/40 transition-colors" onMouseDown={settings.handleMouseDown} />
           <div className="h-full shrink-0 overflow-hidden" style={{ width: settings.width - 4 }}>
             <SettingsPanel onClose={() => setShowSettings(false)} mode={mode} onImported={() => { fetch(undefined, selectedFolderId ?? undefined); db.list().then((all: Note[]) => setAllNotes(all)); }} />

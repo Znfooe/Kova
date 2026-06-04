@@ -67,9 +67,9 @@ export function MarkdownPreview({ content }: MarkdownPreviewProps) {
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
-          pre({ children }) {
+          pre({ children }: { children?: React.ReactNode }) {
             const codeChild = Array.isArray(children) ? children.find((c: React.ReactNode) => c && (c as React.ReactElement).type === "code") as React.ReactElement | undefined : undefined;
-            const codeText = codeChild?.props?.children?.[0] ?? (typeof children === "string" ? children : "");
+            const codeText = (codeChild?.props as any)?.children?.[0] ?? (typeof children === "string" ? children : "");
             return (
               <div className="relative group/code">
                 <CopyButton text={typeof codeText === "string" ? codeText : ""} />

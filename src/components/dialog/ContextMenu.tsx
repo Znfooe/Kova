@@ -5,6 +5,7 @@ export interface ContextMenuItem {
   label: string;
   icon?: React.ReactNode;
   danger?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }
 
@@ -41,11 +42,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         <button
           key={i}
           type="button"
-          onClick={() => { item.onClick(); onClose(); }}
+          disabled={item.disabled}
+          onClick={() => { if (!item.disabled) { item.onClick(); onClose(); } }}
           className={`w-full px-3 py-2 text-left text-xs transition-colors flex items-center gap-2.5 ${
-            item.danger
-              ? "text-danger hover:bg-danger-bg"
-              : "text-ink-soft hover:bg-paper-warm"
+            item.disabled ? "text-ink-ghost/40 cursor-not-allowed" :
+            item.danger ? "text-danger hover:bg-danger-bg" : "text-ink-soft hover:bg-paper-warm"
           }`}
         >
           {item.icon}

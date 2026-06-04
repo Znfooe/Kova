@@ -6,7 +6,7 @@ interface ProfileManagerProps {
   editProfile: AIProfile | null;
   onNewProfile: () => void;
   onSelectProfile: (id: string) => void;
-  onEditProfile: (profile: AIProfile | null) => void;
+  onEditProfile: (profile: AIProfile | null | ((prev: AIProfile | null) => AIProfile | null)) => void;
   onSaveProfile: () => void;
   onDeleteProfile: (id: string) => void;
 }
@@ -88,7 +88,7 @@ export function ProfileManager({
 
 function ProfileEditForm({ profile, onChange, onSave, onCancel }: {
   profile: AIProfile;
-  onChange: (profile: AIProfile | null) => void;
+  onChange: (profile: AIProfile | null | ((prev: AIProfile | null) => AIProfile | null)) => void;
   onSave: () => void;
   onCancel: () => void;
 }) {

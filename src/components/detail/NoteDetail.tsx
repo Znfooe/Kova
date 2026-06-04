@@ -1,10 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import type { EditorView } from "@codemirror/view";
+import { undo, redo } from "@codemirror/commands";
 import type { Note } from "../../lib/db";
-import { loadAutoSave, loadAutoSaveDelay, loadTabSize, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio } from "../../lib/theme";
+import { loadAutoSave, loadAutoSaveDelay, loadViewMode, saveViewMode, loadSplitRatio, saveSplitRatio, loadTabSize } from "../../lib/theme";
 import { MarkdownPreview } from "../shared/MarkdownPreview";
-import { SlidingButtonGroup } from "../shared/SlidingButtonGroup";
+import { CodeEditor, insertAtCursor } from "../shared/CodeEditor";
 import { FormatToolbar } from "../shared/FormatToolbar";
+import { SlidingButtonGroup } from "../shared/SlidingButtonGroup";
 import { ConfirmDialog } from "../dialog/ConfirmDialog";
+import { ContextMenu, type ContextMenuItem } from "../dialog/ContextMenu";
 
 type ViewMode = "edit" | "split" | "preview";
 
@@ -28,24 +32,21 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   const [editContent, setEditContent] = useState(note?.content ?? "");
   const [splitRatio, setSplitRatio] = useState(loadSplitRatio);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null);
+  const editorViewRef = useRef<EditorView | null>(null);
   const titleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevNoteIdRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
-  const historyRef = useRef<string[]>([]);
-  const [canUndo, setCanUndo] = useState(false);
-  // Read settings directly from localStorage for real-time updates
+  const [tabSize, setTabSize] = useState(loadTabSize);
   const getAutoSave = () => loadAutoSave();
   const getAutoSaveDelay = () => loadAutoSaveDelay();
-  const getTabSize = () => loadTabSize();
 
-  const handleEditorScroll = useCallback(() => {
-    const ta = textareaRef.current;
+  const handleEditorScroll = useCallback((scrollTop: number, scrollHeight: number, clientHeight: number) => {
     const pv = previewRef.current;
-    if (!ta || !pv) return;
-    const ratio = ta.scrollTop / (ta.scrollHeight - ta.clientHeight || 1);
+    if (!pv) return;
+    const ratio = scrollTop / (scrollHeight - clientHeight || 1);
     pv.scrollTop = ratio * (pv.scrollHeight - pv.clientHeight);
   }, []);
 
@@ -55,8 +56,6 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
       prevNoteIdRef.current = note.id;
       setEditTitle(note.title);
       setEditContent(note.content);
-      historyRef.current = [];
-      setCanUndo(false);
     }
   }, [note]);
 
@@ -70,6 +69,7 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
       const { key, value } = (e as CustomEvent).detail;
       if (key === "view-mode") setMode(value as ViewMode);
       if (key === "split-ratio") setSplitRatio(value);
+      if (key === "tab-size") setTabSize(value);
     };
     window.addEventListener("fp-settings-changed", handler);
     return () => window.removeEventListener("fp-settings-changed", handler);
@@ -80,17 +80,14 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
-
     const onMouseMove = (e: MouseEvent) => {
       const ratio = ((e.clientX - rect.left) / rect.width) * 100;
       setSplitRatio(Math.min(80, Math.max(20, ratio)));
     };
-
     const onMouseUp = () => {
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
-
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
   }, []);
@@ -106,9 +103,6 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
   }, [note, onUpdateTitle]);
 
   const handleContentChange = useCallback((value: string) => {
-    historyRef.current.push(editContent);
-    if (historyRef.current.length > 50) historyRef.current.shift();
-    setCanUndo(true);
     setEditContent(value);
     if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     if (getAutoSave()) {
@@ -116,19 +110,17 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         if (note) onUpdateContent(note.id, value);
       }, getAutoSaveDelay());
     }
-  }, [note, editContent, onUpdateContent]);
+  }, [note, onUpdateContent]);
 
   const handleUndo = useCallback(() => {
-    const prev = historyRef.current.pop();
-    if (prev !== undefined) {
-      setEditContent(prev);
-      setCanUndo(historyRef.current.length > 0);
-      if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
-      contentTimerRef.current = setTimeout(() => {
-        if (note) onUpdateContent(note.id, prev);
-      }, 800);
-    }
-  }, [note, onUpdateContent]);
+    const view = editorViewRef.current;
+    if (view) undo(view);
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    const view = editorViewRef.current;
+    if (view) redo(view);
+  }, []);
 
   const handleSave = useCallback(() => {
     if (titleTimerRef.current) clearTimeout(titleTimerRef.current);
@@ -145,14 +137,30 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         e.preventDefault();
         handleSave();
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
-        e.preventDefault();
-        handleUndo();
-      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [handleSave, handleUndo]);
+  }, [handleSave]);
+
+  const getEditorMenuItems = (): ContextMenuItem[] => {
+    const view = editorViewRef.current;
+    const hasSelection = view ? !view.state.selection.main.empty : false;
+    return [
+      { label: "撤销", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>, onClick: handleUndo },
+      { label: "重做", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>, onClick: handleRedo },
+      { label: "剪切", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>, onClick: () => document.execCommand("cut"), disabled: !hasSelection },
+      { label: "复制", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>, onClick: () => document.execCommand("copy") },
+      { label: "粘贴", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>, onClick: async () => { const text = await navigator.clipboard.readText(); if (view) insertAtCursor(view, text); } },
+      { label: "全选", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>, onClick: () => { if (view) { view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); view.focus(); } } },
+      { label: "插入代码块", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>, onClick: () => { if (view) insertAtCursor(view, "\n```\n", "\n```\n"); } },
+      { label: "插入表格", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>, onClick: () => { if (view) insertAtCursor(view, "\n| 列1 | 列2 | 列3 |\n| --- | --- | --- |\n| 内容 | 内容 | 内容 |\n"); } },
+    ];
+  };
+
+  const getPreviewMenuItems = (): ContextMenuItem[] => [
+    { label: "复制", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>, onClick: () => document.execCommand("copy") },
+    { label: "全选", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>, onClick: () => { const el = previewRef.current; if (el) { const range = document.createRange(); range.selectNodeContents(el); window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range); } } },
+  ];
 
   if (!note) {
     return (
@@ -183,11 +191,13 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
           </button>
           <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
-          <button type="button" onClick={handleUndo} disabled={!canUndo}
-            className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all cursor-pointer ${
-              !canUndo ? "text-ink-ghost/30" : "text-ink-ghost hover:text-ink-faint hover:bg-paper-warm"
-            }`} title="撤销 (Ctrl+Z)">
+          <button type="button" onClick={handleUndo}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer" title="撤销 (Ctrl+Z)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          </button>
+          <button type="button" onClick={handleRedo}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-ink-ghost hover:text-ink-faint hover:bg-paper-warm transition-all cursor-pointer" title="重做 (Ctrl+Shift+Z)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
           </button>
           <div className="h-4 w-px bg-paper-deep/30 mx-0.5" />
           <button type="button" onClick={handleSave}
@@ -223,28 +233,17 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         {(mode === "edit" || mode === "split") && (
           <div className={`${mode === "split" ? "" : "flex-1"} flex flex-col min-h-0`} style={mode === "split" ? { width: `${splitRatio}%` } : undefined}>
             {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-paper-deep/10 shrink-0"><span className="text-[10px] text-ink-ghost">编辑</span></div>}
-            <FormatToolbar textareaRef={textareaRef} onChange={handleContentChange} />
-            <textarea ref={textareaRef} value={editContent} onChange={(e) => handleContentChange(e.target.value)}
-              onScroll={mode === "split" ? handleEditorScroll : undefined}
-              onKeyDown={(e) => {
-                if (e.key === "Tab") {
-                  e.preventDefault();
-                  const start = e.currentTarget.selectionStart;
-                  const end = e.currentTarget.selectionEnd;
-                  const tabSize = getTabSize();
-                  const spaces = " ".repeat(tabSize);
-                  const newValue = editContent.substring(0, start) + spaces + editContent.substring(end);
-                  handleContentChange(newValue);
-                  requestAnimationFrame(() => {
-                    if (textareaRef.current) {
-                      textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + tabSize;
-                    }
-                  });
-                }
-              }}
+            <FormatToolbar editorViewRef={editorViewRef} />
+            <CodeEditor
+              value={editContent}
+              onChange={handleContentChange}
               placeholder="支持 Markdown 语法..."
-              className="flex-1 resize-none bg-transparent text-ink-soft px-6 py-4 focus:outline-none placeholder:text-ink-ghost font-mono editor-textarea"
-              spellCheck={false} />
+              className="flex-1 min-h-0"
+              tabSize={tabSize}
+              editorViewRef={editorViewRef}
+              onScroll={mode === "split" ? handleEditorScroll : undefined}
+              onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getEditorMenuItems() }); }}
+            />
           </div>
         )}
 
@@ -258,7 +257,8 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         {(mode === "preview" || mode === "split") && (
           <div className={`${mode === "split" ? "" : "flex-1"} flex flex-col min-h-0`} style={mode === "split" ? { width: `${100 - splitRatio}%` } : undefined}>
             {mode === "split" && <div className="h-7 px-4 flex items-center border-b border-paper-deep/10 shrink-0"><span className="text-[10px] text-ink-ghost">预览</span></div>}
-            <div ref={previewRef} className="flex-1 overflow-y-auto px-6 py-4">
+            <div ref={previewRef} className="flex-1 overflow-y-auto px-6 py-4 [&::-webkit-scrollbar]:w-[6px] [&::-webkit-scrollbar-thumb]:bg-paper-deep [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb:hover]:bg-ink-ghost [&::-webkit-scrollbar-track]:bg-transparent"
+              onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, items: getPreviewMenuItems() }); }}>
               <MarkdownPreview content={mode === "split" ? editContent : note.content} />
             </div>
           </div>
@@ -269,6 +269,15 @@ export function NoteDetail({ note, onToggleSidebar, onDelete, onUpdateTitle, onU
         <div className="px-6 pb-3 pt-1 shrink-0 flex items-center gap-1.5 flex-wrap">
           {note.tags.map((tag) => <span key={tag} className="text-xs px-2 py-0.5 rounded-full bg-accent-mist text-accent">{tag}</span>)}
         </div>
+      )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
+        />
       )}
 
       {showDeleteConfirm && (

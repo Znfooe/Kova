@@ -478,6 +478,7 @@ pub fn run() {
 
             if let Some(tray) = app.tray_by_id("main-tray") {
                 tray.set_menu(Some(menu))?;
+                tray.set_show_menu_on_left_click(false)?;
                 tray.on_menu_event(move |app, event| {
                     match event.id.as_ref() {
                         "open" => {
@@ -499,8 +500,13 @@ pub fn run() {
                     if let TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                            if window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true) {
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            } else {
+                                let _ = window.minimize();
+                            }
                         }
                     }
                 });
