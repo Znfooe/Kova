@@ -63,6 +63,7 @@ export function SettingsPanel({ onClose, mode }: SettingsPanelProps) {
 
   useEffect(() => {
     localStorage.setItem("fp-close-to-tray", String(closeToTray));
+    window.dispatchEvent(new CustomEvent("fp-settings-changed", { detail: { key: "close-to-tray", value: closeToTray } }));
   }, [closeToTray]);
 
   useEffect(() => {

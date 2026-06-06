@@ -42,6 +42,8 @@ export default function App() {
     return saved !== null ? saved : "";
   });
 
+  const [closeToTray, setCloseToTray] = useState(() => localStorage.getItem("fp-close-to-tray") !== "false");
+
   const sidebar = usePanelResize({ storageKey: "kova-sidebar-width", defaultWidth: 260, minWidth: 180, maxWidth: 400, side: "right" });
   const settings = usePanelResize({ storageKey: "kova-settings-width", defaultWidth: 360, minWidth: 280, maxWidth: 500, side: "left" });
   const ai = usePanelResize({ storageKey: "kova-ai-width", defaultWidth: 360, minWidth: 300, maxWidth: 600, side: "left" });
@@ -105,6 +107,16 @@ export default function App() {
     });
     return () => { unlisten.then((fn) => fn()); };
   }, [selectedFolderId, fetch]);
+
+  // Listen for close-to-tray setting changes
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { key, value } = (e as CustomEvent).detail;
+      if (key === "close-to-tray") setCloseToTray(value);
+    };
+    window.addEventListener("fp-settings-changed", handler);
+    return () => window.removeEventListener("fp-settings-changed", handler);
+  }, []);
 
   // Listen for AI tool data changes
   useEffect(() => {
@@ -224,7 +236,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-paper">
-      <TitleBar settingsOpen={showSettings} aiOpen={showAI} closeToTray={localStorage.getItem("fp-close-to-tray") !== "false"} mode={mode} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} />
+      <TitleBar settingsOpen={showSettings} aiOpen={showAI} closeToTray={closeToTray} mode={mode} onToggleMode={handleToggleMode} onToggleSettings={() => { setShowSettings((v) => !v); setShowAI(false); }} onToggleAI={() => { setShowAI((v) => !v); setShowSettings(false); }} />
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}

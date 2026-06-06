@@ -248,6 +248,13 @@ fn toggle_window(window: tauri::Window) -> Result<(), String> {
     Ok(())
 }
 
+static WINDOW_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+fn mark_window_shown() {
+    WINDOW_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 // ---- AI commands ----
 
 #[tauri::command]
@@ -466,8 +473,20 @@ pub fn run() {
             }
         }))
         .setup(|app| {
+            // 窗口显示由前端在 restoreWindowSize() 完成后调用
+            // 避免窗口先以默认位置显示再居中的闪烁
+            // 安全网：如果前端 3 秒内没显示窗口，Rust 端强制显示
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
+                let win = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    // 只有窗口从未显示过才触发
+                    if !WINDOW_SHOWN.load(std::sync::atomic::Ordering::Relaxed) {
+                        WINDOW_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let _ = win.show();
+                        let _ = win.set_focus();
+                    }
+                });
             }
 
             // Setup tray menu
@@ -483,6 +502,7 @@ pub fn run() {
                     match event.id.as_ref() {
                         "open" => {
                             if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.unminimize();
                                 let _ = window.show();
                                 let _ = window.set_focus();
                             }
@@ -560,6 +580,7 @@ pub fn run() {
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,
             get_ai_profiles, get_active_ai_profile, save_ai_profile, delete_ai_profile, set_active_ai_profile,
+            mark_window_shown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Kova");
