@@ -392,6 +392,11 @@ fn set_active_ai_profile(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn fetch_models(base_url: String, api_key: String) -> Result<Vec<String>, String> {
+    ai().fetch_models(&base_url, &api_key).await
+}
+
+#[tauri::command]
 fn update_quick_shortcut(app: tauri::AppHandle, shortcut: String) -> Result<(), String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     // Unregister old shortcut
@@ -580,6 +585,7 @@ pub fn run() {
             ai_chat, ai_chat_stream, create_conversation, get_conversations, update_conversation_title, delete_conversation,
             get_messages, get_ai_config, save_ai_config,
             get_ai_profiles, get_active_ai_profile, save_ai_profile, delete_ai_profile, set_active_ai_profile,
+            fetch_models,
             mark_window_shown,
         ])
         .run(tauri::generate_context!())

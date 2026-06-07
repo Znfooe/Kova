@@ -110,6 +110,20 @@ pub struct Choice {
     pub message: ApiMessage,
 }
 
+// ---- Model list types ----
+
+#[derive(Debug, Deserialize)]
+pub struct ModelsResponse {
+    pub data: Vec<ModelInfo>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ModelInfo {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub model_type: Option<String>,
+}
+
 // ---- AI Service ----
 
 pub struct AiService {
@@ -133,6 +147,32 @@ impl AiService {
         Self {
             client: reqwest::Client::new(),
         }
+    }
+
+    /// Fetch available models from an OpenAI-compatible API provider
+    pub async fn fetch_models(&self, base_url: &str, api_key: &str) -> Result<Vec<String>, String> {
+        let url = format!("{}/models", base_url.trim_end_matches('/'));
+        let response = self.client.get(&url)
+            .header("Authorization", format!("Bearer {}", api_key))
+            .send()
+            .await
+            .map_err(|e| format!("请求失败: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("API 错误 ({}): {}", status, body));
+        }
+
+        let models_response: ModelsResponse = response.json().await
+            .map_err(|e| format!("解析响应失败: {}", e))?;
+
+        let model_ids: Vec<String> = models_response.data
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+
+        Ok(model_ids)
     }
 
     /// Full chat loop: send message, handle tool calls, return final response
